@@ -1,0 +1,44 @@
+name: windows app
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/windows-app.yml'
+      - 'pom.xml'
+      - 'package-windows.ps1'
+      - 'src/**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  package:
+    runs-on: windows-latest
+    steps:
+      - name: check out code
+        uses: actions/checkout@v4
+
+      - name: set up java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: maven
+
+      - name: install wix
+        shell: pwsh
+        run: choco install wixtoolset --yes --no-progress
+
+      - name: build windows installer
+        shell: pwsh
+        run: ./package-windows.ps1 -PackageType exe
+
+      - name: upload installer
+        uses: actions/upload-artifact@v4
+        with:
+          name: DoorwayAlert-setup
+          path: dist/*.exe
+          if-no-files-found: error
+          retention-days: 30
