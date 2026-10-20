@@ -26,6 +26,7 @@ public final class CameraMonitor implements AutoCloseable {
     private static final int MAX_FRAME_WIDTH = 640;
     private static final int DETECTION_INTERVAL = 3;
     private static final int EXIT_GRACE_MILLIS = 1_500;
+    private static final int CAMERA_SCAN_LIMIT = 10;
 
     private final int cameraIndex;
     private final long cooldownMillis;
@@ -34,6 +35,23 @@ public final class CameraMonitor implements AutoCloseable {
     private volatile boolean running;
     private VideoCapture capture;
     private Thread worker;
+
+    public static List<Integer> findAvailableCameras() {
+        List<Integer> available = new ArrayList<>();
+        for (int index = 0; index < CAMERA_SCAN_LIMIT; index++) {
+            VideoCapture probe = new VideoCapture(index);
+            Mat testFrame = new Mat();
+            try {
+                if (probe.isOpened() && probe.read(testFrame) && !testFrame.empty()) {
+                    available.add(index);
+                }
+            } finally {
+                testFrame.release();
+                probe.release();
+            }
+        }
+        return List.copyOf(available);
+    }
 
     public CameraMonitor(int cameraIndex, long cooldownMillis, Listener listener) {
         this.cameraIndex = cameraIndex;

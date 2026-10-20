@@ -7,7 +7,6 @@ import java.awt.FlowLayout;
 import java.awt.Font;
 import java.awt.GraphicsEnvironment;
 import java.awt.Rectangle;
-import java.awt.Toolkit;
 import java.awt.event.WindowAdapter;
 import java.awt.event.WindowEvent;
 import java.util.List;
@@ -21,9 +20,11 @@ import javax.swing.JFrame;
 import javax.swing.JLabel;
 import javax.swing.JPanel;
 import javax.swing.JSpinner;
+import javax.swing.JSlider;
 import javax.swing.SpinnerNumberModel;
 import javax.swing.SwingConstants;
 import javax.swing.SwingUtilities;
+import javax.swing.SwingWorker;
 import javax.swing.UIManager;
 
 import nu.pattern.OpenCV;
@@ -38,24 +39,27 @@ public final class ManagerAlerterApp {
 
     private final JFrame window = new JFrame("Doorway Alert");
     private final CameraPreview preview = new CameraPreview(this::updateRegion);
-    private final JComboBox<String> cameraPicker = new JComboBox<>(cameraChoices());
+    private final JComboBox<CameraChoice> cameraPicker = new JComboBox<>();
     private final JSpinner cooldown = new JSpinner(new SpinnerNumberModel(10, 3, 120, 1));
+    private final JSlider volume = new JSlider(0, 100, 70);
+    private final JLabel volumeValue = new JLabel("70%");
+    private final JButton testSoundButton = new JButton("test sound");
     private final JButton startButton = new JButton("start monitoring");
     private final JButton clearRegionButton = new JButton("clear region");
     private final JLabel status = new JLabel("camera off", SwingConstants.LEFT);
+    private final AlertSound alertSound = new AlertSound();
     private CameraMonitor monitor;
+
+    private record CameraChoice(int index) {
+        @Override
+        public String toString() {
+            return "camera " + index;
+        }
+    }
 
     public static void main(String[] args) {
         OpenCV.loadLocally();
         SwingUtilities.invokeLater(() -> new ManagerAlerterApp().show());
-    }
-
-    private static String[] cameraChoices() {
-        String[] choices = new String[8];
-        for (int index = 0; index < choices.length; index++) {
-            choices[index] = "camera " + index;
-        }
-        return choices;
     }
 
     private void show() {
@@ -74,6 +78,13 @@ public final class ManagerAlerterApp {
         });
         startButton.addActionListener(event -> toggleMonitoring());
         clearRegionButton.addActionListener(event -> preview.clearRegion());
+        testSoundButton.addActionListener(event -> testSound());
+        volume.addChangeListener(event -> {
+            int level = volume.getValue();
+            alertSound.setVolume(level);
+            volumeValue.setText(level + "%");
+        });
+        scanForCameras();
         window.setVisible(true);
     }
 
@@ -112,22 +123,40 @@ public final class ManagerAlerterApp {
 
         JPanel controls = new JPanel(new BorderLayout(0, 10));
         controls.setOpaque(false);
+        JPanel controlStack = new JPanel();
+        controlStack.setOpaque(false);
+        controlStack.setLayout(new BoxLayout(controlStack, BoxLayout.Y_AXIS));
+
         JPanel controlRow = new JPanel(new FlowLayout(FlowLayout.LEFT, 9, 0));
         controlRow.setOpaque(false);
         styleButton(startButton, true);
         styleButton(clearRegionButton, false);
-        cameraPicker.setSelectedIndex(0);
-        cameraPicker.setToolTipText("Select a camera index; unavailable cameras will report an error when started.");
+        styleButton(testSoundButton, false);
+        cameraPicker.setEnabled(false);
+        cameraPicker.setToolTipText("Only cameras detected on this computer are listed.");
         cooldown.setToolTipText("Minimum seconds between dings for separate entries.");
+        volume.setMajorTickSpacing(25);
+        volume.setPaintTicks(true);
+        volume.setPreferredSize(new Dimension(135, 36));
+        startButton.setEnabled(false);
 
         controlRow.add(new JLabel("camera"));
         controlRow.add(cameraPicker);
         controlRow.add(Box.createHorizontalStrut(8));
         controlRow.add(new JLabel("ding cooldown (seconds)"));
         controlRow.add(cooldown);
-        controlRow.add(Box.createHorizontalStrut(8));
         controlRow.add(startButton);
-        controls.add(controlRow, BorderLayout.NORTH);
+
+        JPanel soundRow = new JPanel(new FlowLayout(FlowLayout.LEFT, 9, 2));
+        soundRow.setOpaque(false);
+        soundRow.add(new JLabel("ding volume"));
+        soundRow.add(volume);
+        soundRow.add(volumeValue);
+        soundRow.add(testSoundButton);
+
+        controlStack.add(controlRow);
+        controlStack.add(soundRow);
+        controls.add(controlStack, BorderLayout.NORTH);
 
         status.setOpaque(true);
         status.setBackground(new Color(233, 236, 229));
@@ -136,6 +165,44 @@ public final class ManagerAlerterApp {
         controls.add(status, BorderLayout.SOUTH);
         root.add(controls, BorderLayout.SOUTH);
         return root;
+    }
+
+    private void scanForCameras() {
+        status.setText("checking connected cameras…");
+        new SwingWorker<List<Integer>, Void>() {
+            @Override
+            protected List<Integer> doInBackground() {
+                return CameraMonitor.findAvailableCameras();
+            }
+
+            @Override
+            protected void done() {
+                try {
+                    List<Integer> available = get();
+                    cameraPicker.removeAllItems();
+                    available.forEach(index -> cameraPicker.addItem(new CameraChoice(index)));
+                    boolean found = !available.isEmpty();
+                    cameraPicker.setEnabled(found);
+                    startButton.setEnabled(found);
+                    status.setText(found
+                            ? "found " + available.size() + " camera" + (available.size() == 1 ? "" : "s") + " · camera is off"
+                            : "no cameras found · connect a camera and refresh");
+                } catch (Exception exception) {
+                    cameraPicker.setEnabled(false);
+                    startButton.setEnabled(false);
+                    status.setText("could not scan cameras · " + exception.getMessage());
+                }
+            }
+        }.execute();
+    }
+
+    private void testSound() {
+        try {
+            alertSound.play();
+            status.setText(volume.getValue() == 0 ? "volume is muted" : "playing test ding · " + volume.getValue() + "%");
+        } catch (RuntimeException exception) {
+            status.setText("could not play sound · check audio output");
+        }
     }
 
     private void configureAppearance() {
@@ -162,7 +229,9 @@ public final class ManagerAlerterApp {
             return;
         }
 
-        int cameraIndex = cameraPicker.getSelectedIndex();
+        CameraChoice selectedCamera = (CameraChoice) cameraPicker.getSelectedItem();
+        if (selectedCamera == null) return;
+        int cameraIndex = selectedCamera.index();
         long cooldownMillis = ((Number) cooldown.getValue()).longValue() * 1_000;
         monitor = new CameraMonitor(cameraIndex, cooldownMillis, new CameraMonitor.Listener() {
             @Override
@@ -173,7 +242,13 @@ public final class ManagerAlerterApp {
                     status.setText(personPresent ? "camera active · person detected" : "camera active · no person");
                     status.setBackground(personPresent ? new Color(244, 223, 205) : new Color(226, 239, 215));
                     window.setTitle("Doorway Alert · camera active");
-                    if (ding) Toolkit.getDefaultToolkit().beep();
+                    if (ding) {
+                        try {
+                            alertSound.play();
+                        } catch (RuntimeException exception) {
+                            status.setText("person detected · sound unavailable");
+                        }
+                    }
                 });
             }
 
