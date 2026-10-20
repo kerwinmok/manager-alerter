@@ -15,7 +15,7 @@ permissions:
 
 jobs:
   package:
-    runs-on: windows-latest
+    runs-on: windows-2022
     steps:
       - name: check out code
         uses: actions/checkout@v4
@@ -27,9 +27,12 @@ jobs:
           java-version: '21'
           cache: maven
 
-      - name: install wix
+      - name: check wix
         shell: pwsh
-        run: choco install wixtoolset --yes --no-progress
+        run: |
+          $wixBin = "${env:ProgramFiles(x86)}\WiX Toolset v3.14\bin"
+          if (Test-Path $wixBin) { $env:PATH = "$wixBin;$env:PATH" }
+          if (-not (Get-Command candle.exe -ErrorAction SilentlyContinue)) { throw 'WiX is missing from the runner' }
 
       - name: build windows installer
         shell: pwsh
