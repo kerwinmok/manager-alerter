@@ -32,4 +32,14 @@ choose a camera number and start monitoring
 
 drag over the doorway to watch only that area
 
+if the camera is mounted sideways, press `rotate view` until people look upright
+
+the detector only finds upright people, so the rotation matters
+
+`sensitivity` trades missed people against false alarms
+
+`ignore things that don't move` skips shelves, posters and other still objects
+
+if the ding is silent, the status bar says which sound path failed
+
 the app stays visible while running and stops the camera when closed
