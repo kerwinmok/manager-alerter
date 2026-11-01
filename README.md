@@ -1,45 +1,27 @@
 # doorway alert
 
-a local person alert for a doorway
+local person alerts for a doorway. no identification, video storage, or camera uploads.
 
-it does not identify people, save video, or send camera frames online
+use where people know the camera is on.
 
-use it where people know the camera is on
+## windows
 
-## download on windows
+download the installer artifact from the latest `windows app` run and run setup. java and maven are not needed.
 
-open the actions tab on github and choose the latest `windows app` run
+## build
 
-download the `DoorwayAlert-setup` artifact and unzip it
+requires java 21, maven, and a camera.
 
-run the setup exe and follow the steps
+run `powershell -executionpolicy bypass -file ./package-windows.ps1`
 
-no java or maven needed on the computer that runs the download
+or run `mvn exec:java`.
 
-## build it yourself
+## alerts
 
-- java 21
-- maven
-- a camera
+adjust ding volume and cooldown (1 to 300 seconds) in the controls. use `test sound` to check audio.
 
-run `powershell -ExecutionPolicy Bypass -File ./package-windows.ps1`
+## detection
 
-## run in a terminal
+the detector works best when people appear upright. rotate the view if needed.
 
-run `mvn exec:java`
-
-choose a camera number and start monitoring
-
-drag over the doorway to watch only that area
-
-if the camera is mounted sideways, press `rotate view` until people look upright
-
-the detector only finds upright people, so the rotation matters
-
-`sensitivity` trades missed people against false alarms. If the app misses people, raise sensitivity and turn off `ignore things that don't move`; this may cause more false alarms
-
-`ignore things that don't move` skips shelves, posters and other still objects
-
-click `test sound` first and check the volume slider and windows output device if it is silent
-
-the app stays visible while running and stops the camera when closed
+raise sensitivity to catch more people. disable `ignore things that don't move` if detections are still missed.

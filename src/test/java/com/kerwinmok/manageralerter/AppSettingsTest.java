@@ -24,20 +24,23 @@ class AppSettingsTest {
         AppSettings first = new AppSettings(file);
         first.set("rotation", 270);
         first.set("motionOnly", false);
+        first.set("cooldownSeconds", 45);
         first.save();
 
         AppSettings second = new AppSettings(file);
         assertEquals(270, second.getInt("rotation", 0, 0, 270));
+        assertEquals(45, second.getInt("cooldownSeconds", 10, 1, 300));
         assertFalse(second.getBoolean("motionOnly", true));
     }
 
     @Test
     void ignoresGarbageAndClampsRanges(@TempDir Path folder) throws Exception {
         Path file = folder.resolve("settings.properties");
-        Files.writeString(file, "sensitivity=banana\nvolume=500\n");
+        Files.writeString(file, "sensitivity=banana\nvolume=500\ncooldownSeconds=500\n");
         AppSettings settings = new AppSettings(file);
 
         assertEquals(5, settings.getInt("sensitivity", 5, 1, 10));
         assertEquals(100, settings.getInt("volume", 70, 0, 100));
+        assertEquals(300, settings.getInt("cooldownSeconds", 10, 1, 300));
     }
 }

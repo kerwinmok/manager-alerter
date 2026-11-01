@@ -120,7 +120,7 @@ public final class AlertSound {
     static byte[] createTone(int volume) {
         int frameCount = (int) (SAMPLE_RATE * SECONDS);
         byte[] samples = new byte[frameCount * 2];
-        double amplitude = Short.MAX_VALUE * 0.6 * Math.max(0, Math.min(100, volume)) / 100.0;
+        double amplitude = Short.MAX_VALUE * 0.9 * Math.max(0, Math.min(100, volume)) / 100.0;
 
         for (int frame = 0; frame < frameCount; frame++) {
             double time = frame / (double) SAMPLE_RATE;

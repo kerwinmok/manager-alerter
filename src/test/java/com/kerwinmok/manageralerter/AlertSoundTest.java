@@ -21,6 +21,7 @@ class AlertSoundTest {
 
         assertTrue(quiet > 500);
         assertTrue(loud > quiet * 3);
+        assertTrue(loud > 20_000);
         assertTrue(loud < Short.MAX_VALUE);
     }
 

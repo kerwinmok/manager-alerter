@@ -41,8 +41,9 @@ public final class ManagerAlerterApp {
     private final JFrame window = new JFrame("Doorway Alert");
     private final CameraPreview preview = new CameraPreview(this::updateRegion);
     private final JComboBox<CameraChoice> cameraPicker = new JComboBox<>();
-    private final JSpinner cooldown = new JSpinner(new SpinnerNumberModel(10, 3, 120, 1));
     private final AppSettings settings = new AppSettings();
+    private final JSpinner cooldown = new JSpinner(new SpinnerNumberModel(
+            settings.getInt("cooldownSeconds", 10, 1, 300), 1, 300, 1));
     private final JSlider volume = new JSlider(0, 100, settings.getInt("volume", 70, 0, 100));
     private final JLabel volumeValue = new JLabel(volume.getValue() + "%");
     private final JButton rotateButton = new JButton();
@@ -97,6 +98,7 @@ public final class ManagerAlerterApp {
             if (current != null) current.setRequireMotion(motionOnly.isSelected());
             saveSettings();
         });
+        cooldown.addChangeListener(event -> saveSettings());
         alertSound.setVolume(volume.getValue());
         updateRotateLabel();
         volume.addChangeListener(event -> {
@@ -164,7 +166,7 @@ public final class ManagerAlerterApp {
         cameraPicker.setEnabled(false);
         cameraPicker.setToolTipText("Only cameras detected on this computer are listed.");
         cooldown.setToolTipText("Minimum seconds between dings for separate entries.");
-        volume.setMajorTickSpacing(25);
+        volume.setMajorTickSpacing(20);
         volume.setPaintTicks(true);
         volume.setPreferredSize(new Dimension(135, 36));
         startButton.setEnabled(false);
@@ -266,6 +268,7 @@ public final class ManagerAlerterApp {
         settings.set("sensitivity", sensitivity.getValue());
         settings.set("motionOnly", motionOnly.isSelected());
         settings.set("volume", volume.getValue());
+        settings.set("cooldownSeconds", cooldown.getValue());
         settings.save();
     }
 
