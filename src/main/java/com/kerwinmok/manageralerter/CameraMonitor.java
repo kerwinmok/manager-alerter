@@ -7,12 +7,10 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicReference;
 
+import org.opencv.core.Core;
 import org.opencv.core.Mat;
-import org.opencv.core.MatOfDouble;
-import org.opencv.core.MatOfRect;
-import org.opencv.core.Rect;
 import org.opencv.core.Size;
-import org.opencv.objdetect.HOGDescriptor;
+import org.opencv.imgproc.Imgproc;
 import org.opencv.videoio.VideoCapture;
 import org.opencv.videoio.Videoio;
 
@@ -23,7 +21,7 @@ public final class CameraMonitor implements AutoCloseable {
         void onStopped();
     }
 
-    private static final int MAX_FRAME_WIDTH = 640;
+    private static final int MAX_FRAME_SIDE = 800;
     private static final int DETECTION_INTERVAL = 3;
     private static final int EXIT_GRACE_MILLIS = 1_500;
     private static final int CAMERA_SCAN_LIMIT = 10;
@@ -32,6 +30,8 @@ public final class CameraMonitor implements AutoCloseable {
     private final long cooldownMillis;
     private final AtomicReference<Rectangle> region = new AtomicReference<>();
     private final Listener listener;
+    private final PersonDetector detector = new PersonDetector();
+    private volatile int rotationDegrees;
     private volatile boolean running;
     private VideoCapture capture;
     private Thread worker;
@@ -59,8 +59,22 @@ public final class CameraMonitor implements AutoCloseable {
         this.listener = listener;
     }
 
+    /** Region on a 0..1000 grid over the (already rotated) picture, or null for the whole picture. */
     public void setRegion(Rectangle normalizedRegion) {
         region.set(normalizedRegion == null ? null : new Rectangle(normalizedRegion));
+    }
+
+    /** Clockwise degrees to turn the camera picture so people appear upright: 0, 90, 180 or 270. */
+    public void setRotation(int degrees) {
+        rotationDegrees = ((degrees % 360) + 360) % 360;
+    }
+
+    public void setSensitivity(int sensitivity) {
+        detector.setSensitivity(sensitivity);
+    }
+
+    public void setRequireMotion(boolean requireMotion) {
+        detector.setRequireMotion(requireMotion);
     }
 
     public synchronized void start() {
@@ -83,14 +97,12 @@ public final class CameraMonitor implements AutoCloseable {
 
     private void captureLoop() {
         Mat frame = new Mat();
+        Mat rotated = new Mat();
         Mat resized = new Mat();
-        MatOfRect found = new MatOfRect();
-        MatOfDouble weights = new MatOfDouble();
-        HOGDescriptor detector = new HOGDescriptor();
-        detector.setSVMDetector(HOGDescriptor.getDefaultPeopleDetector());
         PersonPresenceGate presence = new PersonPresenceGate(cooldownMillis, EXIT_GRACE_MILLIS);
         List<Rectangle> lastDetections = List.of();
         int frameNumber = 0;
+        int appliedRotation = rotationDegrees;
 
         try {
             while (running) {
@@ -99,26 +111,30 @@ public final class CameraMonitor implements AutoCloseable {
                     break;
                 }
 
-                double scale = Math.min(1.0, (double) MAX_FRAME_WIDTH / frame.width());
-                int width = Math.max(1, (int) Math.round(frame.width() * scale));
-                int height = Math.max(1, (int) Math.round(frame.height() * scale));
-                org.opencv.imgproc.Imgproc.resize(frame, resized, new Size(width, height));
+                int rotation = rotationDegrees;
+                if (rotation != appliedRotation) {
+                    appliedRotation = rotation;
+                    detector.reset();
+                    lastDetections = List.of();
+                }
+                Mat upright = frame;
+                int code = DetectionFilter.rotationCode(rotation);
+                if (code >= 0) {
+                    Core.rotate(frame, rotated, code);
+                    upright = rotated;
+                }
+
+                double scale = Math.min(1.0, (double) MAX_FRAME_SIDE / Math.max(upright.width(), upright.height()));
+                int width = Math.max(1, (int) Math.round(upright.width() * scale));
+                int height = Math.max(1, (int) Math.round(upright.height() * scale));
+                Imgproc.resize(upright, resized, new Size(width, height));
+                detector.feed(resized);
 
                 boolean ding = false;
-                boolean personPresent = false;
+                boolean personPresent;
                 if (frameNumber++ % DETECTION_INTERVAL == 0) {
-                    detector.detectMultiScale(resized, found, weights, 0, new Size(8, 8), new Size(), 1.05, 2.0, false);
-                    Rectangle selectedRegion = region.get();
-                    List<Rectangle> matching = new ArrayList<>();
-                    for (Rect detection : found.toArray()) {
-                        Rectangle box = new Rectangle(detection.x, detection.y, detection.width, detection.height);
-                        if (selectedRegion == null || selectedRegion.contains(box.getCenterX() * 1000.0 / width,
-                                box.getCenterY() * 1000.0 / height)) {
-                            matching.add(box);
-                        }
-                    }
-                    lastDetections = List.copyOf(matching);
-                    PersonPresenceGate.Update update = presence.update(!matching.isEmpty(), System.nanoTime() / 1_000_000L);
+                    lastDetections = detector.detect(resized, region.get());
+                    PersonPresenceGate.Update update = presence.update(!lastDetections.isEmpty(), System.nanoTime() / 1_000_000L);
                     personPresent = update.present();
                     ding = update.ring();
                 } else {
@@ -132,9 +148,9 @@ public final class CameraMonitor implements AutoCloseable {
         } finally {
             running = false;
             frame.release();
+            rotated.release();
             resized.release();
-            found.release();
-            weights.release();
+            detector.close();
             synchronized (this) {
                 if (capture != null) {
                     capture.release();

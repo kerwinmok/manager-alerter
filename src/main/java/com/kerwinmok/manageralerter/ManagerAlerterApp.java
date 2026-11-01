@@ -15,6 +15,7 @@ import javax.swing.BorderFactory;
 import javax.swing.Box;
 import javax.swing.BoxLayout;
 import javax.swing.JButton;
+import javax.swing.JCheckBox;
 import javax.swing.JComboBox;
 import javax.swing.JFrame;
 import javax.swing.JLabel;
@@ -41,8 +42,14 @@ public final class ManagerAlerterApp {
     private final CameraPreview preview = new CameraPreview(this::updateRegion);
     private final JComboBox<CameraChoice> cameraPicker = new JComboBox<>();
     private final JSpinner cooldown = new JSpinner(new SpinnerNumberModel(10, 3, 120, 1));
-    private final JSlider volume = new JSlider(0, 100, 70);
-    private final JLabel volumeValue = new JLabel("70%");
+    private final AppSettings settings = new AppSettings();
+    private final JSlider volume = new JSlider(0, 100, settings.getInt("volume", 70, 0, 100));
+    private final JLabel volumeValue = new JLabel(volume.getValue() + "%");
+    private final JButton rotateButton = new JButton();
+    private final JSlider sensitivity = new JSlider(1, 10, settings.getInt("sensitivity", 7, 1, 10));
+    private final JCheckBox motionOnly = new JCheckBox("ignore things that don't move", settings.getBoolean("motionOnly", false));
+    private int rotation = settings.getInt("rotation", 0, 0, 270) / 90 * 90;
+    private volatile String soundNote = "";
     private final JButton testSoundButton = new JButton("test sound");
     private final JButton startButton = new JButton("start monitoring");
     private final JButton clearRegionButton = new JButton("clear region");
@@ -65,8 +72,8 @@ public final class ManagerAlerterApp {
     private void show() {
         configureAppearance();
         window.setDefaultCloseOperation(JFrame.DO_NOTHING_ON_CLOSE);
-        window.setMinimumSize(new Dimension(760, 620));
-        window.setSize(980, 760);
+        window.setMinimumSize(new Dimension(760, 700));
+        window.setSize(980, 820);
         window.setLocationRelativeTo(null);
         window.setContentPane(buildContent());
         window.addWindowListener(new WindowAdapter() {
@@ -79,10 +86,24 @@ public final class ManagerAlerterApp {
         startButton.addActionListener(event -> toggleMonitoring());
         clearRegionButton.addActionListener(event -> preview.clearRegion());
         testSoundButton.addActionListener(event -> testSound());
+        rotateButton.addActionListener(event -> rotateView());
+        sensitivity.addChangeListener(event -> {
+            CameraMonitor current = monitor;
+            if (current != null) current.setSensitivity(sensitivity.getValue());
+            if (!sensitivity.getValueIsAdjusting()) saveSettings();
+        });
+        motionOnly.addActionListener(event -> {
+            CameraMonitor current = monitor;
+            if (current != null) current.setRequireMotion(motionOnly.isSelected());
+            saveSettings();
+        });
+        alertSound.setVolume(volume.getValue());
+        updateRotateLabel();
         volume.addChangeListener(event -> {
             int level = volume.getValue();
             alertSound.setVolume(level);
             volumeValue.setText(level + "%");
+            if (!volume.getValueIsAdjusting()) saveSettings();
         });
         scanForCameras();
         window.setVisible(true);
@@ -132,6 +153,14 @@ public final class ManagerAlerterApp {
         styleButton(startButton, true);
         styleButton(clearRegionButton, false);
         styleButton(testSoundButton, false);
+        styleButton(rotateButton, false);
+        rotateButton.setToolTipText("Turn the picture 90 degrees until people look upright. The detector only finds upright people.");
+        sensitivity.setToolTipText("Higher finds more people but may flag objects. Lower ignores weak matches.");
+        motionOnly.setOpaque(false);
+        motionOnly.setToolTipText("Only count a detection if something inside it is moving, so shelves and posters are ignored.");
+        sensitivity.setMajorTickSpacing(3);
+        sensitivity.setPaintTicks(true);
+        sensitivity.setPreferredSize(new Dimension(135, 36));
         cameraPicker.setEnabled(false);
         cameraPicker.setToolTipText("Only cameras detected on this computer are listed.");
         cooldown.setToolTipText("Minimum seconds between dings for separate entries.");
@@ -154,7 +183,15 @@ public final class ManagerAlerterApp {
         soundRow.add(volumeValue);
         soundRow.add(testSoundButton);
 
+        JPanel detectionRow = new JPanel(new FlowLayout(FlowLayout.LEFT, 9, 2));
+        detectionRow.setOpaque(false);
+        detectionRow.add(rotateButton);
+        detectionRow.add(new JLabel("sensitivity"));
+        detectionRow.add(sensitivity);
+        detectionRow.add(motionOnly);
+
         controlStack.add(controlRow);
+        controlStack.add(detectionRow);
         controlStack.add(soundRow);
         controls.add(controlStack, BorderLayout.NORTH);
 
@@ -197,12 +234,39 @@ public final class ManagerAlerterApp {
     }
 
     private void testSound() {
-        try {
-            alertSound.play();
-            status.setText(volume.getValue() == 0 ? "volume is muted" : "playing test ding · " + volume.getValue() + "%");
-        } catch (RuntimeException exception) {
-            status.setText("could not play sound · check audio output");
+        soundNote = "";
+        if (volume.getValue() == 0) {
+            status.setText("volume is muted");
+            return;
         }
+        status.setText("playing test ding · " + volume.getValue() + "%");
+        alertSound.play(this::reportSoundProblem);
+    }
+
+    private void reportSoundProblem(String problem) {
+        soundNote = problem;
+        SwingUtilities.invokeLater(() -> status.setText(problem));
+    }
+
+    private void rotateView() {
+        rotation = (rotation + 90) % 360;
+        updateRotateLabel();
+        CameraMonitor current = monitor;
+        if (current != null) current.setRotation(rotation);
+        preview.clearRegion();
+        saveSettings();
+    }
+
+    private void updateRotateLabel() {
+        rotateButton.setText("rotate view (" + rotation + "°)");
+    }
+
+    private void saveSettings() {
+        settings.set("rotation", rotation);
+        settings.set("sensitivity", sensitivity.getValue());
+        settings.set("motionOnly", motionOnly.isSelected());
+        settings.set("volume", volume.getValue());
+        settings.save();
     }
 
     private void configureAppearance() {
@@ -233,22 +297,17 @@ public final class ManagerAlerterApp {
         if (selectedCamera == null) return;
         int cameraIndex = selectedCamera.index();
         long cooldownMillis = ((Number) cooldown.getValue()).longValue() * 1_000;
-        monitor = new CameraMonitor(cameraIndex, cooldownMillis, new CameraMonitor.Listener() {
+        CameraMonitor.Listener listener = new CameraMonitor.Listener() {
             @Override
             public void onFrame(java.awt.image.BufferedImage image, List<Rectangle> detections,
                     boolean personPresent, boolean ding) {
                 SwingUtilities.invokeLater(() -> {
                     preview.setFrame(image, detections);
-                    status.setText(personPresent ? "camera active · person detected" : "camera active · no person");
+                    String note = soundNote.isEmpty() ? "" : " · " + soundNote;
+                    status.setText((personPresent ? "camera active · person detected" : "camera active · no person") + note);
                     status.setBackground(personPresent ? new Color(244, 223, 205) : new Color(226, 239, 215));
                     window.setTitle("Doorway Alert · camera active");
-                    if (ding) {
-                        try {
-                            alertSound.play();
-                        } catch (RuntimeException exception) {
-                            status.setText("person detected · sound unavailable");
-                        }
-                    }
+                    if (ding) alertSound.play(ManagerAlerterApp.this::reportSoundProblem);
                 });
             }
 
@@ -268,7 +327,12 @@ public final class ManagerAlerterApp {
                     window.setTitle("Doorway Alert");
                 });
             }
-        });
+        };
+        monitor = new CameraMonitor(cameraIndex, cooldownMillis, listener);
+        monitor.setRotation(rotation);
+        monitor.setSensitivity(sensitivity.getValue());
+        monitor.setRequireMotion(motionOnly.isSelected());
+        monitor.setRegion(preview.currentRegion());
 
         startButton.setEnabled(false);
         status.setText("opening camera " + cameraIndex + "…");

@@ -15,10 +15,15 @@ import java.util.function.Consumer;
 
 import javax.swing.JPanel;
 
+/**
+ * Shows the camera picture without stretching it. Detections and the doorway region are both
+ * kept on a 0..1000 grid over the picture itself, so they line up whatever the window size.
+ */
 public final class CameraPreview extends JPanel {
     private static final Color BACKGROUND = new Color(22, 25, 29);
     private static final Color ACCENT = new Color(167, 220, 106);
     private static final Color DETECTION = new Color(250, 108, 88);
+    private static final int GRID = DetectionFilter.GRID;
 
     private final Consumer<Rectangle> regionListener;
     private BufferedImage image;
@@ -38,27 +43,38 @@ public final class CameraPreview extends JPanel {
         MouseAdapter selectionHandler = new MouseAdapter() {
             @Override
             public void mousePressed(MouseEvent event) {
-                dragStartX = event.getX();
-                dragStartY = event.getY();
+                if (image == null) return;
+                Rectangle bounds = imageBounds();
+                dragStartX = clamp(event.getX(), bounds.x, bounds.x + bounds.width);
+                dragStartY = clamp(event.getY(), bounds.y, bounds.y + bounds.height);
                 dragSelection = new Rectangle(dragStartX, dragStartY, 0, 0);
             }
 
             @Override
             public void mouseDragged(MouseEvent event) {
-                dragSelection = rectangleBetween(dragStartX, dragStartY, event.getX(), event.getY());
+                if (image == null || dragSelection == null) return;
+                Rectangle bounds = imageBounds();
+                int x = clamp(event.getX(), bounds.x, bounds.x + bounds.width);
+                int y = clamp(event.getY(), bounds.y, bounds.y + bounds.height);
+                dragSelection = rectangleBetween(dragStartX, dragStartY, x, y);
                 repaint();
             }
 
             @Override
             public void mouseReleased(MouseEvent event) {
-                Rectangle drawn = rectangleBetween(dragStartX, dragStartY, event.getX(), event.getY());
+                if (image == null || dragSelection == null) return;
+                Rectangle drawn = dragSelection;
                 dragSelection = null;
-                if (drawn.width >= 20 && drawn.height >= 20 && image != null) {
-                    normalizedRegion = new Rectangle(
-                            clamp((int) ((drawn.x / (double) getWidth()) * 1000), 0, 999),
-                            clamp((int) ((drawn.y / (double) getHeight()) * 1000), 0, 999),
-                            clamp((int) ((drawn.width / (double) getWidth()) * 1000), 1, 1000),
-                            clamp((int) ((drawn.height / (double) getHeight()) * 1000), 1, 1000));
+                if (drawn.width >= 20 && drawn.height >= 20) {
+                    Rectangle bounds = imageBounds();
+                    int x = (int) Math.round((drawn.x - bounds.x) * (double) GRID / bounds.width);
+                    int y = (int) Math.round((drawn.y - bounds.y) * (double) GRID / bounds.height);
+                    int right = (int) Math.round((drawn.x + drawn.width - bounds.x) * (double) GRID / bounds.width);
+                    int bottom = (int) Math.round((drawn.y + drawn.height - bounds.y) * (double) GRID / bounds.height);
+                    x = clamp(x, 0, GRID - 1);
+                    y = clamp(y, 0, GRID - 1);
+                    normalizedRegion = new Rectangle(x, y,
+                            clamp(right - x, 1, GRID - x), clamp(bottom - y, 1, GRID - y));
                     regionListener.accept(new Rectangle(normalizedRegion));
                 }
                 repaint();
@@ -68,6 +84,7 @@ public final class CameraPreview extends JPanel {
         addMouseMotionListener(selectionHandler);
     }
 
+    /** Detections must be on the 0..1000 grid. */
     public void setFrame(BufferedImage image, List<Rectangle> detections) {
         this.image = image;
         this.detections = detections;
@@ -81,8 +98,22 @@ public final class CameraPreview extends JPanel {
         repaint();
     }
 
+    /** The selected doorway region on the 0..1000 grid, or null. */
+    public Rectangle currentRegion() {
+        return normalizedRegion == null ? null : new Rectangle(normalizedRegion);
+    }
+
     public boolean hasRegion() {
         return normalizedRegion != null;
+    }
+
+    /** Where the picture is drawn inside the panel, keeping its proportions. */
+    private Rectangle imageBounds() {
+        if (image == null) return new Rectangle(0, 0, Math.max(1, getWidth()), Math.max(1, getHeight()));
+        double scale = Math.min(getWidth() / (double) image.getWidth(), getHeight() / (double) image.getHeight());
+        int width = Math.max(1, (int) Math.round(image.getWidth() * scale));
+        int height = Math.max(1, (int) Math.round(image.getHeight() * scale));
+        return new Rectangle((getWidth() - width) / 2, (getHeight() - height) / 2, width, height);
     }
 
     @Override
@@ -98,16 +129,17 @@ public final class CameraPreview extends JPanel {
             int textWidth = g.getFontMetrics().stringWidth(message);
             g.drawString(message, (getWidth() - textWidth) / 2, getHeight() / 2);
         } else {
-            g.drawImage(image, 0, 0, getWidth(), getHeight(), null);
+            Rectangle bounds = imageBounds();
+            g.drawImage(image, bounds.x, bounds.y, bounds.width, bounds.height, null);
             g.setStroke(new BasicStroke(2));
             for (Rectangle detection : detections) {
                 g.setColor(DETECTION);
-                g.drawRect(toX(detection.x), toY(detection.y), toWidth(detection.width), toHeight(detection.height));
+                drawGridRect(g, bounds, detection);
             }
             if (normalizedRegion != null) {
                 g.setColor(ACCENT);
                 g.setStroke(new BasicStroke(2, BasicStroke.CAP_BUTT, BasicStroke.JOIN_MITER, 10, new float[]{8, 5}, 0));
-                g.drawRect(toX(normalizedRegion.x), toY(normalizedRegion.y), toWidth(normalizedRegion.width), toHeight(normalizedRegion.height));
+                drawGridRect(g, bounds, normalizedRegion);
             }
         }
 
@@ -119,10 +151,13 @@ public final class CameraPreview extends JPanel {
         g.dispose();
     }
 
-    private int toX(int normalized) { return (int) (normalized * getWidth() / 1000.0); }
-    private int toY(int normalized) { return (int) (normalized * getHeight() / 1000.0); }
-    private int toWidth(int normalized) { return (int) (normalized * getWidth() / 1000.0); }
-    private int toHeight(int normalized) { return (int) (normalized * getHeight() / 1000.0); }
+    private static void drawGridRect(Graphics2D g, Rectangle bounds, Rectangle grid) {
+        int x = bounds.x + (int) Math.round(grid.x * bounds.width / (double) GRID);
+        int y = bounds.y + (int) Math.round(grid.y * bounds.height / (double) GRID);
+        int width = (int) Math.round(grid.width * bounds.width / (double) GRID);
+        int height = (int) Math.round(grid.height * bounds.height / (double) GRID);
+        g.drawRect(x, y, width, height);
+    }
 
     private static int clamp(int value, int min, int max) { return Math.max(min, Math.min(value, max)); }
 

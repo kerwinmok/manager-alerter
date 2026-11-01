@@ -36,10 +36,10 @@ if the camera is mounted sideways, press `rotate view` until people look upright
 
 the detector only finds upright people, so the rotation matters
 
-`sensitivity` trades missed people against false alarms
+`sensitivity` trades missed people against false alarms. If the app misses people, raise sensitivity and turn off `ignore things that don't move`; this may cause more false alarms
 
 `ignore things that don't move` skips shelves, posters and other still objects
 
-if the ding is silent, the status bar says which sound path failed
+click `test sound` first and check the volume slider and windows output device if it is silent
 
 the app stays visible while running and stops the camera when closed
