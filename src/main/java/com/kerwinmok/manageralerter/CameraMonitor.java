@@ -166,10 +166,8 @@ public final class CameraMonitor implements AutoCloseable {
         int channels = mat.channels();
         int imageType = channels == 1 ? BufferedImage.TYPE_BYTE_GRAY : BufferedImage.TYPE_3BYTE_BGR;
         BufferedImage image = new BufferedImage(mat.cols(), mat.rows(), imageType);
-        byte[] target = ((DataBufferByte) image.getRaster().getDataBuffer()).getData();
-        byte[] source = new byte[target.length];
-        mat.get(0, 0, source);
-        System.arraycopy(source, 0, target, 0, target.length);
+        byte[] pixels = ((DataBufferByte) image.getRaster().getDataBuffer()).getData();
+        mat.get(0, 0, pixels);
         return image;
     }
 
